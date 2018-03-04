@@ -224,7 +224,7 @@ def compare_signs(sign1, sign2, diffPercentage=12, minSimilarity=75):
 
 	#print("compare_signs: " + str(timer() - start))
 	if corres >= minSimilarity :
-		print("Correspondance! {} %".format(corres))
+		#print("Correspondance! {} %".format(corres))
 		return True , corres
 	else:
 		return False , corres

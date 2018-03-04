@@ -33,6 +33,15 @@ def read_from_db():
         # cv.imwrite("./Images/"+row[0]+"-small.jpg")
         # cv.imwrite("./Images/"+row[0]+"-big.jpg")
 
+"""
+Check if db empty
+"""
+def IsDbEmpty():
+	curs.execute("SELECT * FROM people")
+	if curs.fetchone() is None:
+		return True
+	else:
+		return False
 
 """
 Return similar signs from db
@@ -58,7 +67,7 @@ def get_similar_signs(smallsign,bigsign,diffPercentage=12,minSimilarity=75):
 	print("{} similar small sign in DB // {} similare big sign in DB".format(nbSmallCorres,nbBigCorres))
 
 
-	print("getSimilarSign: " + str(timer() - start))
+	#print("getSimilarSign: " + str(timer() - start))
 	return similarSmallSign,similarBigSign
 
 
@@ -137,16 +146,9 @@ connect + grab a signature wich will be our target
 conn = sqlite3.connect('humantracking.db')
 curs = conn.cursor()
 #read_from_db()
-targetSign = get_sign_from_db(17,1)
-targetPattern = sign.create_pattern_from_sign(targetSign)
 
 
-"""
-User Interface
-Show the sign and its pattern
-"""
-createSignPreview(targetSign)
-createSignPreview(targetPattern,"Pattern")
+
 
 
 # construct the argument parser and parse the arguments
@@ -155,6 +157,25 @@ ap.add_argument("-v", "--video", help="path to the video file")
 ap.add_argument("-a", "--min-area", type=int, default=1000, help="minimum area size")
 ap.add_argument("-f", "--feed-db", type=bool, default=False, help="if true, will save detected sign on DB")
 args = vars(ap.parse_args())
+
+feed = args["feed_db"]
+b = False
+hasTarget = False
+
+if IsDbEmpty():
+    feed = True
+else:
+	targetSign = get_sign_from_db(4,1)
+	targetPattern = sign.create_pattern_from_sign(targetSign)
+	hasTarget = True
+
+
+	"""
+	User Interface
+	Show the sign and its pattern
+	"""
+	createSignPreview(targetSign)
+	createSignPreview(targetPattern,"Pattern")
 
 # if the video argument is None, then we are reading from webcam
 if args.get("video", None) is None:
@@ -231,13 +252,15 @@ while True:
 			For exemple: something that cross the field of the camera too close
 			"""
 			bigsign = sign.createSign(signature,100)
-			b, val = sign.compare_signs(targetSign,bigsign, 5,85) #diffPercentage, minSimilarity
+			if hasTarget is True:
+				b, val = sign.compare_signs(targetSign,bigsign, 5,85) #diffPercentage, minSimilarity
+
 			if not detected and b:
 				detected = True
 				print("TARGET FOUND !!!")
 				roi = frame[y:y+h, x:x+w]
 				cv.imwrite("./Images/FOUND-"+str(endtime)+"_"+str(val)+".jpg", roi)
-			elif not detected and args["feed_db"] is True:
+			elif not detected and feed is True:
 				detected = True
 				smallsign = sign.createSign(signature,100)
 				small = sign.format_sign(smallsign)
