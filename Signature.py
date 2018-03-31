@@ -109,10 +109,17 @@ def GetSignature(frame,thresh,x,y,w,h,save=False):
 	
 	#start = timer()
 	sign = []
-	for j in range(y ,y+h-1):
+	print("j: {}-{}".format(y+1,y+h-1))
+	print("i: {}-{}".format(x,x+w-1))
+
+	print("thresh:{}".format(frame.shape))
+	print("thresh:{}".format(thresh.shape))
+
+	for j in range(y ,h-y-1):
 		tmp = [-1,-1,-1]
 		cpt = 1
-		for i in range(x + int(round((w)/3)),x+w-1 - int(round((w)/3))):
+		for i in range(x + int(round((w-x)/3)),w-x-1 - int(round((w-x)/3))):
+			#print("j:{},i:{}".format(j,i))
 			if thresh[j][i] != 0:
 
 				tmp = tmp + frame[j][i]

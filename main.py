@@ -1,6 +1,7 @@
 # import the necessary packages
 import argparse
 import numpy as np
+from imutils.object_detection import non_max_suppression
 import scipy.interpolate as interp
 import matplotlib.pyplot as plt
 import datetime
@@ -14,6 +15,26 @@ import sqlite3
 import random
 import io
 import Signature as sign
+import json
+
+
+"""
+Create json file with all sign detected during session
+"""
+def createJsonLog(signlist):
+	data = []
+	cpt = 1
+	for s in signList:
+		data.append({'id': cpt, 'sign' : []})
+		signat = sign.createSign(s,100)
+		for val in signat:
+
+			data[-1]['sign'].append(val.tolist())
+		cpt = cpt +1
+	filename = "session_"+time.strftime("%d-%m-%Y")+'-'+time.strftime("%H-%M-%S")+".txt"
+	with open('Log/'+filename, 'w') as outfile:
+		json.dump(data, outfile)
+
 
 
 """
@@ -162,10 +183,12 @@ feed = args["feed_db"]
 b = False
 hasTarget = False
 
+signList = []
+
 if IsDbEmpty():
     feed = True
 else:
-	targetSign = get_sign_from_db(4,1)
+	targetSign = get_sign_from_db(3,1)
 	targetPattern = sign.create_pattern_from_sign(targetSign)
 	hasTarget = True
 
@@ -194,6 +217,10 @@ detected = False
 
 fgbg = cv.bgsegm.createBackgroundSubtractorMOG()
 
+# initialize the HOG descriptor/person detector
+hog = cv.HOGDescriptor()
+hog.setSVMDetector(cv.HOGDescriptor_getDefaultPeopleDetector())
+
 endtime = 0.0
 
 # loop over the frames of the video
@@ -209,8 +236,7 @@ while True:
 		break
 
 
-	# if detected and timer() - endtime >= 1000:
-	# 	detected = !detected
+	
 	diff = endtime - timer() 
 	if diff >= 200:
 		detected = False
@@ -220,61 +246,114 @@ while True:
 	# resize the frame, convert it to grayscale, and blur it
 	frame = imutils.resize(frame, width=500)
 	frame = cv.flip(frame,0)
-	gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-	gray = cv.GaussianBlur(gray, (43, 43), 0)
+
+	
+	fgmask = fgbg.apply(frame)
 
 	# if the first frame is None, initialize it
 	if firstFrame is None:
+		gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+		gray = cv.GaussianBlur(gray, (43, 43), 0)
 		firstFrame = gray
 		continue
 
-	fgmask = fgbg.apply(frame)
-	(_, cnts, _) = cv.findContours(fgmask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
-	(x, y, w, h) = (0,0,0,0)
-	# loop over the contours
-	for c in cnts:
-		# if the contour is too small, ignore it
-		if cv.contourArea(c) < args["min_area"]:
-			continue
+	orig = frame.copy()
  
-		# compute the bounding box for the contour, draw it on the frame,
-		(x, y, w, h) = cv.boundingRect(c)
+	# detect people in the image
+	(rects, weights) = hog.detectMultiScale(frame, winStride=(8, 8),
+		padding=(16, 16), scale=1.05)
+ 
+	# draw the original bounding boxes
+	for (x, y, w, h) in rects:
+		cv.rectangle(orig, (x, y), (x + w, y + h), (0, 0, 255), 2)
+ 	
+	# apply non-maxima suppression to the bounding boxes using a
+	# fairly large overlap threshold to try to maintain overlapping
+	# boxes that are still people
+	rects = np.array([[x, y, x + w, y + h] for (x, y, w, h) in rects])
+	pick = non_max_suppression(rects, probs=None, overlapThresh=0.65)
+ 
+	if len(pick) > 0:
+		# draw the final bounding boxes
+		for (xA, yA, xB, yB) in pick:
+			if yB >= 100 and xB <= 0.75*yB:
+				cv.rectangle(frame, (xA, yA), (xB, yB), (0, 255, 0), 2)
+				#print("xA:{},yA:{},xB:{},yB:{}".format(xA,yA,xB,yB))
+				signature = sign.GetSignature(frame,fgmask,xA,yA,xB,yB)
 
-		#Make sure the detection is tall enough to fill our 'bigSign' wich is 100
-		if h >= 100 and w <= 0.75*h:
-			cv.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-			signature = sign.GetSignature(frame,fgmask,x,y,w,h)
+				signList.append(signature)
+				"""
+				TODO: Find a way to detect if sign is worth to check
+				For exemple: something that cross the field of the camera too close
+				"""
+				if signature is not None:
+					bigsign = sign.createSign(signature,100)
+					if hasTarget is True:
+						b, val = sign.compare_signs(targetSign,bigsign, 5,85) #diffPercentage, minSimilarity
+
+					if not detected and b:
+						detected = True
+						print("TARGET FOUND !!!")
+						roi = frame[y:y+h, x:x+w]
+						cv.imwrite("./Images/FOUND-"+str(endtime)+"_"+str(val)+".jpg", roi)
+					elif not detected and feed is True:
+						detected = True
+						smallsign = sign.createSign(signature,100)
+						small = sign.format_sign(smallsign)
+						big = sign.format_sign(bigsign)
+						smallList,bigList = get_similar_signs(smallsign,bigsign)
+						if len(smallList)+len(bigList) <= 5:
+							dynamic_data_entry(small,big)
 
 
-			"""
-			TODO: Find a way to detect if sign is worth to check
-			For exemple: something that cross the field of the camera too close
-			"""
-			bigsign = sign.createSign(signature,100)
-			if hasTarget is True:
-				b, val = sign.compare_signs(targetSign,bigsign, 5,85) #diffPercentage, minSimilarity
+	# fgmask = fgbg.apply(frame)
+	# (_, cnts, _) = cv.findContours(fgmask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
-			if not detected and b:
-				detected = True
-				print("TARGET FOUND !!!")
-				roi = frame[y:y+h, x:x+w]
-				cv.imwrite("./Images/FOUND-"+str(endtime)+"_"+str(val)+".jpg", roi)
-			elif not detected and feed is True:
-				detected = True
-				smallsign = sign.createSign(signature,100)
-				small = sign.format_sign(smallsign)
-				big = sign.format_sign(bigsign)
-				smallList,bigList = get_similar_signs(smallsign,bigsign)
-				if len(smallList)+len(bigList) <= 5:
-					dynamic_data_entry(small,big)
+	# (x, y, w, h) = (0,0,0,0)
+	# # loop over the contours
+	# for c in cnts:
+	# 	# if the contour is too small, ignore it
+	# 	if cv.contourArea(c) < args["min_area"]:
+	# 		continue
+ 
+	# 	# compute the bounding box for the contour, draw it on the frame,
+	# 	(x, y, w, h) = cv.boundingRect(c)
+
+	# 	#Make sure the detection is tall enough to fill our 'bigSign' wich is 100
+	# 	if h >= 100 and w <= 0.75*h:
+	# 		cv.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+	# 		signature = sign.GetSignature(frame,fgmask,x,y,w,h)
+
+
+	# 		"""
+	# 		TODO: Find a way to detect if sign is worth to check
+	# 		For exemple: something that cross the field of the camera too close
+	# 		"""
+	# 		bigsign = sign.createSign(signature,100)
+	# 		if hasTarget is True:
+	# 			b, val = sign.compare_signs(targetSign,bigsign, 5,85) #diffPercentage, minSimilarity
+
+	# 		if not detected and b:
+	# 			detected = True
+	# 			print("TARGET FOUND !!!")
+	# 			roi = frame[y:y+h, x:x+w]
+	# 			cv.imwrite("./Images/FOUND-"+str(endtime)+"_"+str(val)+".jpg", roi)
+	# 		elif not detected and feed is True:
+	# 			detected = True
+	# 			smallsign = sign.createSign(signature,100)
+	# 			small = sign.format_sign(smallsign)
+	# 			big = sign.format_sign(bigsign)
+	# 			smallList,bigList = get_similar_signs(smallsign,bigsign)
+	# 			if len(smallList)+len(bigList) <= 5:
+	# 				dynamic_data_entry(small,big)
 
 
 
 
 	# show the frame and record if the user presses a key
-	cv.imshow("Security Feed", frame)
-	cv.imshow("FGmask", fgmask)
+	cv.imshow("Frame", frame)
+	cv.imshow("Orig", orig)
+	cv.imshow("GMASK", fgmask)
 
 
 	endtime = endtime + timer()
@@ -283,6 +362,7 @@ while True:
  
 	# if the `q` key is pressed, break from the lop
 	if key == ord("q"):
+		createJsonLog(signList)
 		break
 	elif key != 255:
 		cv.imwrite("./Images/"+chr(key)+"-frame.jpg" ,frame)
